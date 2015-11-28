@@ -6,3 +6,9 @@ A stream data sender to named pipe
 ```
 go get github.com/digsy/fbsender
 ```
+
+### usage
+
+```
+$GOPATH/bin/fbsender send.conf
+```
