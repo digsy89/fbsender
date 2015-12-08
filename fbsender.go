@@ -7,7 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"time"
+	"regexp"
 )
 
 type Config struct {
@@ -34,51 +34,56 @@ func check(e error) {
 	}
 }
 
-func send(id int, c Config, tup chan int) {
-	// open data source
-	fmt.Printf("[sender %d] reading from %s\n", id, c.Src)
-	fin, err := os.Open(c.Src)
-	check(err)
-	reader := bufio.NewReader(fin)
+func isSocketAddress(dst string) bool {
+	socketAddressRegex := regexp.MustCompile("(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}):(\\d+)")
+	return socketAddressRegex.MatchString(dst)
+}
 
-	// read data
-	lines := make([]string, 0)
-	line, isPrefix, err := reader.ReadLine()
-	for err == nil && !isPrefix {
-		s := string(line)
-		lines = append(lines, s)
-		line, isPrefix, err = reader.ReadLine()
+func loadData(configs []Config) map[string][]string {
+	sources := make(map[string]int)
+	for _, c := range configs {
+		sources[c.Src] = sources[c.Src] + 1
 	}
 
-	if err != io.EOF {
-		fmt.Println(err)
-		return
-	}
-
-	// open data destination
-	fout, err := os.Create(c.Dst)
-	check(err)
-	defer fout.Close()
-	writer := bufio.NewWriter(fout)
-
-	// send data
-	stime := time.Second / time.Duration(c.Tps)
-	fout.Sync()
-	for i := 0; i < len(lines); i++ {
-		_, err := writer.WriteString(lines[i] + "\n")
+	data := make(map[string][]string)
+	for s := range sources {
+		fmt.Println("\033[1;32mloading data from\033[0m " + s)
+		fin, err := os.Open(s)
 		check(err)
-		time.Sleep(stime)
-		writer.Flush()
+		reader := bufio.NewReader(fin)
+
+		// read data
+		line, isPrefix, err := reader.ReadLine()
+		for err == nil && !isPrefix {
+			data[s] = append(data[s], string(line))
+			line, isPrefix, err = reader.ReadLine()
+		}
+
+		if err != io.EOF {
+			fmt.Println(err)
+			return nil
+		}
 	}
+
+	return data
 }
 
 func main() {
 	args := os.Args
 	config_filename := args[1]
 	configs := ConfigParse(config_filename)
+
+	data := loadData(configs)
+
 	l := make(chan int)
-	for i := range configs {
-		go send(i, configs[i], l)
+	for _, c := range configs {
+		var sdr sender
+		if isSocketAddress(c.Dst) {
+			sdr = socket{Dst: c.Dst, Tps: c.Tps, Name: c.Name}
+		} else {
+			sdr = file{Dst: c.Dst, Tps: c.Tps, Name: c.Name}
+		}
+		go sdr.send(data[c.Src], l)
 	}
 	x := <-l
 	fmt.Println(x)
